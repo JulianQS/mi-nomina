@@ -480,7 +480,7 @@
           <div className="grid grid-cols-2 gap-3">
             <StatCard title="Días acumulados"  value={accrued} sub={`desde ${emp.initial_date}`} />
             <StatCard title="Días tomados"     value={taken}   sub="total registrado" />
-            <StatCard title="Balance inicial"  value={emp.initial_balance} sub={`al ${emp.initial_date}`} />
+            {emp.initial_balance > 0 && <StatCard title="Balance inicial"  value={emp.initial_balance} sub={`al ${emp.initial_date}`} />}
             <StatCard title="Salario quincena" value={fmtCOP(Math.round(sal.monthly/2))} sub={sal.is_minimum?'Mínimo 2026':'Personalizado'} />
           </div>
           <Card>
@@ -632,8 +632,10 @@
           <Card className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-gray-500 font-medium">Balance inicial</p>
-                <p className="text-sm text-gray-700 font-semibold mt-0.5">{emp.initial_balance} días — {emp.initial_date}</p>
+                {emp.initial_balance > 0 && <>
+                  <p className="text-xs text-gray-500 font-medium">Balance inicial</p>
+                  <p className="text-sm text-gray-700 font-semibold mt-0.5">{emp.initial_balance} días — {emp.initial_date}</p>
+                </>}
               </div>
               <Badge color="blue">+1.25 días/mes</Badge>
             </div>
