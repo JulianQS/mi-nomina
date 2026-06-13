@@ -74,6 +74,9 @@ Also add the new year to the quincena year dropdown (search for `2025,2026,2027`
       "initial_date": "YYYY-MM-DD",
       "pto_events": [
         { "date": "YYYY-MM-DD", "days": 1.0, "comment": "..." }
+      ],
+      "paid_obligations": [
+        { "type": "quincena", "key": "quincena_2026-06-15", "amount": 1124548, "paidDate": "2026-06-15" }
       ]
     }
   ]

@@ -20,9 +20,19 @@
     const { useState, useEffect, useMemo } = React;
 
     // ── CONSTANTS (Colombia 2026) ─────────────────────────────
-    const MONTHLY_MIN_WAGE  = 1750905;
+    const MONTHLY_MIN_WAGE  = 1750905;  // current year — used in forms/display
     const MONTHLY_TRANSPORT = 249095;
     const MONTHLY_ACCRUAL   = 15 / 12;
+
+    // Historical SMLV and transport by year — update each January
+    const WAGE_HISTORY = {
+      2024: { minWage: 1300000, transport: 162000 },
+      2025: { minWage: 1423500, transport: 200000 },
+      2026: { minWage: 1750905, transport: 249095 },
+    };
+    function getWagesForYear(year) {
+      return WAGE_HISTORY[year] || WAGE_HISTORY[Math.max(...Object.keys(WAGE_HISTORY).map(Number))];
+    }
 
     const EMP_COLORS = [
       'bg-indigo-500','bg-violet-500','bg-pink-500','bg-emerald-500',
@@ -113,13 +123,14 @@
 
     // ── SALARY HELPERS ────────────────────────────────────────
     function getEffectiveSalary(emp, dateStr) {
+      const { minWage, transport } = getWagesForYear(parseInt(dateStr.slice(0,4)));
       const hist = (emp.salary_history || [])
         .filter(s => s.date <= dateStr)
         .sort((a, b) => b.date.localeCompare(a.date));
-      if (!hist.length) return { monthly: MONTHLY_MIN_WAGE, is_minimum: true, has_transport: true };
+      if (!hist.length) return { monthly: minWage, is_minimum: true, has_transport: true, transportMonthly: transport };
       const e = hist[0];
-      const monthly = e.is_minimum ? MONTHLY_MIN_WAGE : e.amount;
-      return { monthly, is_minimum: e.is_minimum, has_transport: monthly <= 2 * MONTHLY_MIN_WAGE };
+      const monthly = e.is_minimum ? minWage : e.amount;
+      return { monthly, is_minimum: e.is_minimum, has_transport: monthly <= 2 * minWage, transportMonthly: transport };
     }
     function getCurrentSalary(emp) {
       return getEffectiveSalary(emp, new Date().toISOString().slice(0, 10));
@@ -142,9 +153,14 @@
     function calcPayroll(emp, year, month1, half) {
       const q = quincenaBounds(year, month1, half);
       const sal = getEffectiveSalary(emp, q.end.toISOString().slice(0, 10));
-      const salQ = Math.round(sal.monthly / 2);
-      const tMonthly = sal.has_transport !== false ? MONTHLY_TRANSPORT : 0;
-      const tQ = Math.round(tMonthly / 2);
+      const cs = parseDate(emp.contract_start);
+      const worksFrom = cs > q.start ? cs : q.start;
+      const daysInPeriod = Math.round((q.end - q.start) / 86400000) + 1;
+      const daysWorked = cs > q.end ? 0 : Math.round((q.end - worksFrom) / 86400000) + 1;
+      const prorated = daysWorked < daysInPeriod;
+      const tMonthly = sal.has_transport !== false ? sal.transportMonthly : 0;
+      const salQ = prorated ? Math.round(sal.monthly * daysWorked / 30) : Math.round(sal.monthly / 2);
+      const tQ   = prorated ? Math.round(tMonthly * daysWorked / 30)   : Math.round(tMonthly / 2);
       const tDay = Math.round(tMonthly / 30);
       const ss = Math.round(salQ * 0.08);
       const ptoDays = ptoDaysInRange(emp, q.start, q.end);
@@ -152,7 +168,8 @@
       const netT = tQ - tDed;
       return { ...q, ptoDays, salary: salQ, netTransport: netT, transportDeduction: tDed,
         transportQ: tQ, grossTotal: salQ + netT, socialSecurity: ss,
-        net: salQ + netT - ss, isMinimum: sal.is_minimum, monthlySalary: sal.monthly };
+        net: salQ + netT - ss, isMinimum: sal.is_minimum, monthlySalary: sal.monthly,
+        prorated, daysWorked, daysInPeriod };
     }
 
     // ── PRIMA ─────────────────────────────────────────────────
@@ -181,7 +198,7 @@
       const days = calcPrimaDays(emp, sem);
       if (days === 0) return { days:0, amount:0, inProgress:false };
       const sal = getEffectiveSalary(emp, sem.end.toISOString().slice(0,10));
-      const transport = sal.has_transport ? MONTHLY_TRANSPORT : 0;
+      const transport = sal.has_transport ? sal.transportMonthly : 0;
       const amount = Math.round((sal.monthly + transport) * days / 360);
       const today = new Date(); today.setHours(0,0,0,0);
       const semEnd = new Date(sem.end); semEnd.setHours(0,0,0,0);
@@ -189,8 +206,90 @@
       return { days, months, amount, salary: sal.monthly, inProgress: today <= semEnd };
     }
 
+    // ── CESANTÍAS ─────────────────────────────────────────────
+    // Cesantías for calendar year Y are deposited to a fund by Feb 14 of Y+1,
+    // and the 12% intereses are paid to the employee by Jan 31 of Y+1.
+    function cesantiasPeriod(year) {
+      return {
+        year, start: new Date(year,0,1), end: new Date(year,11,31),
+        interesesDue: new Date(year+1,0,31),  // Ene 31
+        cesantiasDue: new Date(year+1,1,14),  // Feb 14
+      };
+    }
+    function calcCesantias(emp, year) {
+      const per = cesantiasPeriod(year);
+      const cs = parseDate(emp.contract_start);
+      const aStart = cs > per.start ? cs : per.start;
+      if (aStart > per.end) return { ...per, days:0, cesantias:0, intereses:0, salary:0 };
+      const days = Math.min(360, Math.max(0, daysBetween30(aStart, per.end)));
+      const sal = getEffectiveSalary(emp, per.end.toISOString().slice(0,10));
+      const transport = sal.has_transport ? sal.transportMonthly : 0;
+      const cesantias = Math.round((sal.monthly + transport) * days / 360);
+      const intereses = Math.round(cesantias * days * 0.12 / 360);
+      return { ...per, days, months: Math.round(days/30*100)/100, cesantias, intereses, salary: sal.monthly };
+    }
+
+    // ── UPCOMING OBLIGATIONS ──────────────────────────────────
+    // Merges every dated employer obligation (quincenas, prima, cesantías,
+    // intereses) into one chronologically sorted, forward-looking list.
+    const obligationKey = (type, date) => `${type}_${date.toISOString().slice(0,10)}`;
+
+    function upcomingObligations(emp, count = 5) {
+      const today = new Date(); today.setHours(0,0,0,0);
+      const cs = parseDate(emp.contract_start);
+      const paid = new Set((emp.paid_obligations||[]).map(p => p.key));
+      const items = [];
+
+      // Quincena pay dates: 15th and month-end, scanning ~8 months ahead.
+      const baseY = today.getFullYear(), baseM = today.getMonth();
+      for (let k = 0; k < 8; k++) {
+        const y = baseY + Math.floor((baseM + k) / 12);
+        const m = (baseM + k) % 12;             // 0-based month
+        for (const half of [1, 2]) {
+          const q = quincenaBounds(y, m+1, half);
+          const payDate = new Date(q.end); payDate.setHours(0,0,0,0);
+          if (payDate < today || q.end < cs) continue;
+          const key = obligationKey('quincena', payDate);
+          if (!paid.has(key)) items.push({ date: payDate, type:'quincena', label:'Quincena',
+            sub: `${half}ª · ${MONTH_NAMES[m]} ${y}`, amount: calcPayroll(emp, y, m+1, half).net, key });
+        }
+      }
+
+      // Prima: due Jun 30 and Dec 20, this year and next.
+      for (const yr of [baseY, baseY+1]) {
+        semesters(yr).forEach(sem => {
+          const due = new Date(sem.dueDate); due.setHours(0,0,0,0);
+          if (due < today) return;
+          const pr = calcPrima(emp, sem);
+          const key = obligationKey('prima', due);
+          if (pr.amount > 0 && !paid.has(key)) items.push({ date: due, type:'prima',
+            label:'Prima de servicios', sub: `${sem.label} ${yr}`, amount: pr.amount, key });
+        });
+      }
+
+      // Cesantías + intereses for the last two calendar years.
+      for (const yr of [baseY-1, baseY]) {
+        const c = calcCesantias(emp, yr);
+        if (c.cesantias <= 0) continue;
+        const iDue = new Date(c.interesesDue); iDue.setHours(0,0,0,0);
+        const cDue = new Date(c.cesantiasDue); cDue.setHours(0,0,0,0);
+        const iKey = obligationKey('intereses', iDue);
+        const cKey = obligationKey('cesantias', cDue);
+        if (iDue >= today && !paid.has(iKey)) items.push({ date: iDue, type:'intereses',
+          label:'Intereses cesantías', sub:`Año ${yr}`, amount: c.intereses, key: iKey });
+        if (cDue >= today && !paid.has(cKey)) items.push({ date: cDue, type:'cesantias',
+          label:'Cesantías', sub:`Año ${yr}`, amount: c.cesantias, key: cKey });
+      }
+
+      items.sort((a,b) => a.date - b.date);
+      return items.slice(0, count);
+    }
+
     // ── FORMATTING ────────────────────────────────────────────
     const fmtCOP = n => new Intl.NumberFormat('es-CO', { style:'currency', currency:'COP', minimumFractionDigits:0 }).format(n);
+    const fmtCOPShort = n => n >= 1e6
+      ? `$${(n/1e6).toLocaleString('es-CO',{minimumFractionDigits:0,maximumFractionDigits:2})}M`
+      : `$${Math.round(n/1e3).toLocaleString('es-CO')}K`;
     const fmtDate = s => parseDate(s).toLocaleDateString('es-CO', { day:'2-digit', month:'short', year:'numeric' });
     const initials = emp => `${(emp.name||'?')[0]}${(emp.last_name||'')[0]||''}`.toUpperCase();
     const empColor = i => EMP_COLORS[i % EMP_COLORS.length];
@@ -313,6 +412,70 @@
                 </div>
               );
             })}
+          </div>
+        </Card>
+      );
+    }
+
+    // ── CESANTÍAS VIEW ───────────────────────────────────────
+    function CesantiasAnualView({ emp, year }) {
+      const prevYear = year - 1;
+      const c = calcCesantias(emp, prevYear);
+      const today = new Date(); today.setHours(0,0,0,0);
+      if (c.cesantias <= 0) return (
+        <Card className="p-6 text-center">
+          <p className="text-sm text-gray-400">Sin cesantías para {prevYear} — empleada no había iniciado.</p>
+        </Card>
+      );
+      const iDue = new Date(c.interesesDue); iDue.setHours(0,0,0,0);
+      const cDue = new Date(c.cesantiasDue); cDue.setHours(0,0,0,0);
+      const iLeft = Math.ceil((iDue - today) / 86400000);
+      const cLeft = Math.ceil((cDue - today) / 86400000);
+      const sal = getEffectiveSalary(emp, `${prevYear}-12-31`);
+      const transport = sal.has_transport ? sal.transportMonthly : 0;
+      return (
+        <Card className="overflow-hidden">
+          <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
+            <p className="text-sm font-semibold text-gray-700">Cesantías año {prevYear}</p>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {[
+              { label:'Intereses sobre cesantías', amount: c.intereses,
+                formula:`${fmtCOP(c.cesantias)} × 12% × ${c.days} días / 360`,
+                due: `31 ene ${year}`, daysLeft: iLeft },
+              { label:'Cesantías (depósito fondo)', amount: c.cesantias,
+                formula:`(${fmtCOP(c.salary)}${transport?` + ${fmtCOP(transport)}`:''})/mes × ${c.days} días / 360`,
+                due: `14 feb ${year}`, daysLeft: cLeft },
+            ].map(r => (
+              <div key={r.label} className="px-4 py-3 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-semibold text-gray-700">{r.label}</p>
+                  <p className="text-lg font-black text-gray-800 tabular-nums">{fmtCOP(r.amount)}</p>
+                </div>
+                <div className="flex items-center justify-between flex-wrap gap-y-0.5">
+                  <span className="text-xs text-gray-400">{r.formula}</span>
+                  <span className={`text-xs font-semibold ${r.daysLeft >= 0 && r.daysLeft <= 30 ? 'text-red-500' : 'text-gray-400'}`}>
+                    Vence: {r.due}
+                  </span>
+                </div>
+              </div>
+            ))}
+            <div className="px-4 py-3 space-y-1.5">
+              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Base del cálculo</p>
+              {[
+                ['Período', `1 ene – 31 dic ${prevYear}`],
+                ['Días trabajados', `${c.days} (conv. 30 días/mes)`],
+                ['Meses equivalentes', String(c.months)],
+                ['Salario mensual', fmtCOP(c.salary)],
+                ...(transport > 0 ? [['Auxilio de transporte', fmtCOP(transport)]] : []),
+                ['Base mensual', fmtCOP(c.salary + transport)],
+              ].map(([k,v]) => (
+                <div key={k} className="flex justify-between py-1 border-b border-gray-50 last:border-0">
+                  <span className="text-xs text-gray-500">{k}</span>
+                  <span className="text-xs font-semibold text-gray-700 tabular-nums">{v}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </Card>
       );
@@ -443,46 +606,114 @@
     }
 
     // ── DASHBOARD ─────────────────────────────────────────────
-    function Dashboard({ emp }) {
+    function Dashboard({ emp, onUpdate }) {
       const balance  = calcBalance(emp);
-      const accrued  = calcAccrued(emp);
-      const taken    = calcTaken(emp);
+      const [, balLabel] = balance>=5 ? ['green','Disponible'] : balance>=2 ? ['yellow','Bajo'] : ['red','Crítico'];
+      const sal      = getCurrentSalary(emp);
       const nextAccr = nextAccrualDate();
-      const daysLeft = daysUntil(nextAccr);
-      const [balColor, balLabel] = balance>=5 ? ['green','Disponible'] : balance>=2 ? ['yellow','Bajo'] : ['red','Crítico'];
-      const sal    = getCurrentSalary(emp);
-      const recent = [...(emp.pto_events||[])].reverse().slice(0,5);
+      const accrLeft = daysUntil(nextAccr);
+      const recent   = [...(emp.pto_events||[])].reverse().slice(0,4);
+      const agenda   = useMemo(() => upcomingObligations(emp, 5), [emp]);
+      const paid     = emp.paid_obligations || [];
+      const next     = agenda[0];
+
+      const DOT = { quincena:'bg-indigo-400', prima:'bg-purple-400',
+        cesantias:'bg-emerald-400', intereses:'bg-amber-400' };
+      const countdown = d => d===0 ? 'hoy' : d===1 ? 'mañana' : `en ${d} días`;
+
+      function markPaid(o) {
+        const rec = { type: o.type, key: o.key, amount: o.amount,
+          paidDate: new Date().toISOString().slice(0,10) };
+        onUpdate({ ...emp, paid_obligations: [...paid, rec] });
+      }
+      function undoPaid(key) {
+        onUpdate({ ...emp, paid_obligations: paid.filter(p => p.key !== key) });
+      }
 
       return (
         <div className="space-y-5 pb-2">
+          {/* HERO — próximo pago */}
           <div className="rounded-2xl bg-gradient-to-br from-indigo-600 to-indigo-800 p-6 text-white shadow-lg">
             <div className="flex items-start justify-between">
-              <div>
-                <p className="text-indigo-200 text-xs font-semibold uppercase tracking-widest">Saldo de Vacaciones</p>
-                <p className="text-6xl font-black mt-2 leading-none">{balance}</p>
-                <p className="text-indigo-200 mt-1 text-sm">días disponibles</p>
-              </div>
-              <Badge color={balColor}>{balLabel}</Badge>
+              <p className="text-indigo-200 text-xs font-semibold uppercase tracking-widest">Próximo pago</p>
+              {next && (() => { const d = daysUntil(next.date);
+                return <Badge color={d<=3?'red':d<=7?'yellow':'blue'}>{countdown(d)}</Badge>; })()}
             </div>
-            <div className="mt-5 pt-4 border-t border-indigo-500 flex justify-between text-sm">
-              <div>
-                <p className="text-indigo-300 text-xs">Próxima acumulación</p>
-                <p className="text-white font-semibold">+1.25 días</p>
-              </div>
-              <div className="text-right">
-                <p className="text-indigo-300 text-xs">en {daysLeft} días</p>
-                <p className="text-white font-semibold">
-                  {nextAccr.toLocaleDateString('es-CO',{day:'numeric',month:'long'})}
+            {next ? (
+              <>
+                <p className="text-5xl font-black mt-2 leading-none tabular-nums">{fmtCOP(next.amount)}</p>
+                <p className="text-indigo-200 mt-2 text-sm">
+                  {next.label} · {next.date.toLocaleDateString('es-CO',{day:'numeric',month:'long',year:'numeric'})}
                 </p>
-              </div>
-            </div>
+              </>
+            ) : (
+              <p className="text-2xl font-black mt-2">Sin obligaciones próximas</p>
+            )}
           </div>
+
+          {/* SNAPSHOT */}
           <div className="grid grid-cols-2 gap-3">
-            <StatCard title="Días acumulados"  value={accrued} sub={`desde ${emp.initial_date}`} />
-            <StatCard title="Días tomados"     value={taken}   sub="total registrado" />
-            {emp.initial_balance > 0 && <StatCard title="Balance inicial"  value={emp.initial_balance} sub={`al ${emp.initial_date}`} />}
-            <StatCard title="Salario quincena" value={fmtCOP(Math.round(sal.monthly/2))} sub={sal.is_minimum?'Mínimo 2026':'Personalizado'} />
+            <StatCard title="Vacaciones" value={`${balance}d`} sub={`${balLabel} · acumula en ${accrLeft}d`} />
+            <StatCard title="Salario"    value={fmtCOP(sal.monthly)} sub={sal.is_minimum?'Mínimo 2026':'Personalizado'} />
           </div>
+
+          {/* AGENDA — próximas obligaciones */}
+          <Card className="overflow-hidden">
+            <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
+              <p className="text-sm font-semibold text-gray-700">Próximas obligaciones</p>
+            </div>
+            {agenda.length===0
+              ? <p className="px-4 py-6 text-sm text-gray-400 text-center">Sin obligaciones próximas.</p>
+              : <div className="divide-y divide-gray-50">
+                  {agenda.map((o,i) => { const d = daysUntil(o.date);
+                    return (
+                      <div key={i} className="flex items-center gap-3 px-4 py-3 group hover:bg-gray-50 transition-colors">
+                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${DOT[o.type]||'bg-gray-300'}`}/>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm text-gray-800 font-medium truncate">{o.label}</p>
+                          <p className="text-xs text-gray-400 truncate">
+                            {o.date.toLocaleDateString('es-CO',{day:'2-digit',month:'short'})} · {o.sub} · {countdown(d)}
+                          </p>
+                        </div>
+                        <p className={`text-sm font-bold tabular-nums flex-shrink-0 ${d<=7?'text-indigo-600':'text-gray-800'}`}>{fmtCOP(o.amount)}</p>
+                        <button onClick={() => markPaid(o)} title="Marcar como pagado"
+                          className="opacity-0 group-hover:opacity-100 w-7 h-7 flex items-center justify-center rounded-full text-emerald-600 hover:bg-emerald-50 transition-all flex-shrink-0">
+                          <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd"/>
+                          </svg>
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+            }
+          </Card>
+
+          {/* PAGADOS — historial con opción de deshacer */}
+          {paid.length > 0 && (
+            <Card className="overflow-hidden">
+              <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
+                <p className="text-sm font-semibold text-gray-700">Pagados recientemente</p>
+              </div>
+              <div className="divide-y divide-gray-50">
+                {[...paid].reverse().map((p,i) => (
+                  <div key={i} className="flex items-center gap-3 px-4 py-3 group hover:bg-gray-50 transition-colors">
+                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${DOT[p.type]||'bg-gray-300'}`}/>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-gray-500 font-medium truncate line-through">{p.type === 'quincena' ? 'Quincena' : p.type === 'prima' ? 'Prima' : p.type === 'cesantias' ? 'Cesantías' : 'Intereses'}</p>
+                      <p className="text-xs text-gray-400">Pagado el {fmtDate(p.paidDate)} · {fmtCOP(p.amount)}</p>
+                    </div>
+                    <button onClick={() => undoPaid(p.key)} title="Deshacer"
+                      className="opacity-0 group-hover:opacity-100 text-xs font-semibold text-gray-400 hover:text-indigo-600 transition-all flex-shrink-0 px-2 py-1">
+                      Deshacer
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+
+          {/* ÚLTIMAS AUSENCIAS */}
           <Card>
             <div className="px-4 py-3 border-b border-gray-100">
               <p className="text-sm font-semibold text-gray-700">Últimas ausencias</p>
@@ -516,12 +747,16 @@
 
       function handleMonthChange(m) {
         setMonth(m);
-        if (half === 'prima' && m !== '6' && m !== '12') setHalf('1');
+        if (half === 'prima'     && m !== '6'  && m !== '12') setHalf('1');
+        if (half === 'cesantias' && m !== '1'  && m !== '2')  setHalf('1');
       }
 
-      const showPrima = half === 'prima';
-      const p = useMemo(() => calcPayroll(emp,+year,+month, showPrima?1:+half), [emp,year,month,half,showPrima]);
-      const noVacNet = p.salary + p.transportQ - p.socialSecurity;
+      const showPrima     = half === 'prima';
+      const showCesantias = half === 'cesantias';
+      const p = useMemo(() =>
+        (!showPrima && !showCesantias) ? calcPayroll(emp,+year,+month,+half) : null,
+        [emp,year,month,half,showPrima,showCesantias]);
+      const noVacNet = p ? p.salary + p.transportQ - p.socialSecurity : 0;
 
       return (
         <div className="space-y-5 pb-2">
@@ -529,7 +764,7 @@
             <p className="text-sm font-semibold text-gray-700 mb-3">Seleccionar quincena</p>
             <div className="grid grid-cols-3 gap-3">
               <SelectField label="Año" value={year} onChange={setYear}>
-                {[2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
+                {[2024,2025,2026,2027].map(y=><option key={y} value={y}>{y}</option>)}
               </SelectField>
               <SelectField label="Mes" value={month} onChange={handleMonthChange}>
                 {MONTH_NAMES.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
@@ -538,10 +773,13 @@
                 <option value="1">1ª (1–15)</option>
                 <option value="2">2ª (16–fin)</option>
                 {(month==='6'||month==='12') && <option value="prima">Prima</option>}
+                {(month==='1'||month==='2')  && <option value="cesantias">Cesantías</option>}
               </SelectField>
             </div>
           </Card>
-          {showPrima ? (
+          {showCesantias ? (
+            <CesantiasAnualView emp={emp} year={+year} />
+          ) : showPrima ? (
             <PrimaView emp={emp} semIdx={month==='6'?0:1} year={+year} />
           ) : (
             <>
@@ -550,6 +788,7 @@
                   <p className="text-sm font-semibold text-gray-700">{p.label}</p>
                   <div className="flex gap-2 mt-1 flex-wrap">
                     <Badge color={p.isMinimum?'blue':'purple'}>{p.isMinimum?'Salario mínimo':'Personalizado'} · {fmtCOP(p.monthlySalary)}/mes</Badge>
+                    {p.prorated && <Badge color="yellow">Prorrateado · {p.daysWorked}/{p.daysInPeriod} días</Badge>}
                     {p.ptoDays>0 && <Badge color="orange">{p.ptoDays}d vacaciones</Badge>}
                   </div>
                 </div>
@@ -590,17 +829,17 @@
                   <p className="text-white text-2xl font-black tabular-nums">{fmtCOP(p.net)}</p>
                 </div>
               </Card>
-              {p.isMinimum && (
+              {p.isMinimum && (() => { const w = getWagesForYear(+year); return (
                 <Card className="p-4">
-                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Valores fijos 2026</p>
+                  <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Valores fijos {year}</p>
                   <div className="space-y-1.5">
                     {[
-                      ['Salario mensual mínimo',         fmtCOP(MONTHLY_MIN_WAGE)],
-                      ['Subsidio transporte mensual',    fmtCOP(MONTHLY_TRANSPORT)],
-                      ['Salario por quincena',           fmtCOP(Math.round(MONTHLY_MIN_WAGE/2))],
-                      ['Subsidio transporte / quincena', fmtCOP(Math.round(MONTHLY_TRANSPORT/2))],
-                      ['Deducción por día vacaciones',   fmtCOP(Math.round(MONTHLY_TRANSPORT/30))],
-                      ['Seguridad social quincena',      fmtCOP(Math.round(MONTHLY_MIN_WAGE/2*0.08))],
+                      ['Salario mensual mínimo',         fmtCOP(w.minWage)],
+                      ['Subsidio transporte mensual',    fmtCOP(w.transport)],
+                      ['Salario por quincena',           fmtCOP(Math.round(w.minWage/2))],
+                      ['Subsidio transporte / quincena', fmtCOP(Math.round(w.transport/2))],
+                      ['Deducción por día vacaciones',   fmtCOP(Math.round(w.transport/30))],
+                      ['Seguridad social quincena',      fmtCOP(Math.round(w.minWage/2*0.08))],
                     ].map(([k,v]) => (
                       <div key={k} className="flex justify-between py-1 border-b border-gray-50 last:border-0">
                         <span className="text-xs text-gray-500">{k}</span>
@@ -609,7 +848,7 @@
                     ))}
                   </div>
                 </Card>
-              )}
+              ); })()}
             </>
           )}
         </div>
@@ -952,7 +1191,7 @@
           </div>
 
           <div className="flex-1 max-w-lg mx-auto w-full px-4 -mt-14 pb-24">
-            {tab==='dashboard' && <Dashboard emp={emp} />}
+            {tab==='dashboard' && <Dashboard emp={emp} onUpdate={updateEmp} />}
             {tab==='payroll'   && <Payroll   emp={emp} />}
             {tab==='history'   && <History   emp={emp} onUpdate={updateEmp} />}
             {tab==='add'       && <AddPTO    emp={emp} onUpdate={updateEmp} />}

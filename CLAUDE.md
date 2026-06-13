@@ -27,6 +27,9 @@ The file is a single ~1000-line script block. Sections are marked with `// ─�
 | PTO CALCULATIONS | `calcAccrued`, `calcTaken`, `calcBalance` — all take an `emp` object |
 | SALARY HELPERS | `getEffectiveSalary(emp, dateStr)` — walks `salary_history` to find the salary in effect on a given date |
 | PAYROLL | `calcPayroll(emp, year, month, half)` — returns a full quincena breakdown |
+| PRIMA | `semesters(year)`, `calcPrima(emp, sem)` — prima de servicios per semester |
+| CESANTÍAS | `cesantiasPeriod(year)`, `calcCesantias(emp, year)` — annual cesantías + intereses with statutory due dates |
+| OBLIGATIONS AGENDA | `obligationKey(type, date)`, `upcomingObligations(emp, count)` — merges all payment obligations into a sorted forward-looking list, filtering paid records |
 | FORMATTING | `fmtCOP`, `fmtDate`, etc. |
 | SHARED COMPONENTS | `Card`, `Badge`, `StatCard`, `InputField`, `SelectField`, `BottomSheet` |
 | Feature components | `EnrollForm`, `SalaryForm`, `PTOForm`, `PTOView`, `PayrollView`, `EmployeeList` |
@@ -40,6 +43,9 @@ State is kept entirely in the `App` component. There is no router — tabs (`pto
 - Transport subsidy: `MONTHLY_TRANSPORT = 249_095` COP/month — only for employees earning ≤ 2× min wage
 - Social security deduction: 8% of quincena salary (health 4% + pension 4%)
 - PTO accrual: 1.25 days/month (15 days/year), accrued at end of each month
+- Prima de servicios: `(monthly_salary + transport_if_eligible) × days / 360`; due Jun 30 (1st sem) and Dec 20 (2nd sem)
+- Cesantías: same formula × 360 days/year; deposited to fund by Feb 14 of the following year
+- Intereses sobre cesantías: `cesantias × days × 12% / 360`; paid to employee by Jan 31 of the following year
 
 ## Updating for a new year
 
@@ -51,3 +57,4 @@ See README.md for the full JSON shape. Key points:
 - `salary_history` is an array of dated entries; `getEffectiveSalary` picks the most recent entry on or before the target date.
 - `is_minimum: true` means the amount is ignored and `MONTHLY_MIN_WAGE` is used instead, so minimum-wage employees auto-update when the constant changes.
 - `pto_events` uses negative days (absences); accrual is computed separately.
+- `paid_obligations` (optional) is an array of `{ type, key, amount, paidDate }` records. Absence of the field means nothing is marked paid. Used by `upcomingObligations` to filter the agenda. Key format: `"<type>_<YYYY-MM-DD>"` (ISO due date).
