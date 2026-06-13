@@ -1,0 +1,6 @@
+# Data exports — keep your backups local, not in the repo
+mi_nomina.json
+*.json
+
+# macOS
+.DS_Store

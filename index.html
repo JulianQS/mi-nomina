@@ -35,23 +35,16 @@
 
     // ── DEFAULT DATA ──────────────────────────────────────────
     const DEFAULT_DB = {
-      active: "emp_dennys",
+      active: "emp_demo",
       employees: [{
-        id: "emp_dennys",
-        name: "Dennys", last_name: "", cedula: "", phone: "", email: "",
-        contract_start: "2025-06-30",
+        id: "emp_demo",
+        name: "María", last_name: "García", cedula: "", phone: "", email: "",
+        contract_start: "2026-01-01",
         salary_history: [
-          { date: "2025-06-30", amount: 1750905, is_minimum: true, note: "Ingreso" }
+          { date: "2026-01-01", amount: 1750905, is_minimum: true, note: "Ingreso" }
         ],
-        initial_balance: 9, initial_date: "2025-06-30",
-        pto_events: [
-          { date: "2025-12-26", days: 5.0, comment: "5 dias diciembre 2025" },
-          { date: "2026-01-02", days: 1.0, comment: "1 dia" },
-          { date: "2026-04-01", days: 1.0, comment: "1 dia" },
-          { date: "2026-05-05", days: 1.0, comment: "faltó 1 día" },
-          { date: "2026-05-15", days: 1.0, comment: "1 día" },
-          { date: "2026-05-19", days: 4.0, comment: "4 días" }
-        ]
+        initial_balance: 0, initial_date: "2026-01-01",
+        pto_events: []
       }]
     };
 

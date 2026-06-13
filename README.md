@@ -6,6 +6,8 @@ Simple HR tracker for small teams in Colombia. Tracks PTO balances and computes 
 
 Double-click `index.html` — opens in any browser. No installs, no server.
 
+> **Privacy:** all data is stored exclusively in your browser's `localStorage`. Nothing is sent to any server. Use the **Export** button to back up your data as a local JSON file.
+
 ## Features
 
 - **Multi-employee** — enroll employees with name, ID, phone, email, contract start date, and salary
