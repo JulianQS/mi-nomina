@@ -8,6 +8,14 @@ Mi Nómina is a zero-dependency HR tracker for small teams in Colombia. It has t
 
 - **`index.html`** — the entire app. A single-file React 18 app (JSX compiled by Babel Standalone at runtime, styled with Tailwind CDN). Opens directly in a browser — no build step, no server. Data lives in `localStorage` under the key `mi_nomina_db`.
 
+**Mobile / PWA files** (all optional when opening via `file://`):
+- `manifest.webmanifest` — install metadata. Named `.webmanifest` because `.gitignore` ignores `*.json`.
+- `sw.js` — cache-first service worker. **Bump `CACHE_VERSION` on every deploy.**
+- `vendor/` — pinned React 18.3.1, ReactDOM 18.3.1, Babel Standalone 7.26.4 (version in filename). No runtime third-party requests.
+- `icons/` — PNG app icons (iOS needs PNG).
+
+New CSS goes in the plain `<style>` block, not Tailwind classes: the inlined Tailwind is a precompiled subset, so unused classes silently do nothing. Hover-only controls must use `.hover-reveal` (visible on touch devices).
+
 ## Running the app
 
 ```bash
@@ -49,7 +57,7 @@ State is kept entirely in the `App` component. There is no router — tabs (`pto
 
 ## Updating for a new year
 
-Change two constants near the top of the `<script>` block and add the new year to the quincena year dropdown (search for `2025,2026,2027`).
+Change two constants near the top of the `<script>` block, add the new year to the quincena year dropdown (search for `2025,2026,2027`), and bump `CACHE_VERSION` in `sw.js` so installed apps update.
 
 ## Data schema
 

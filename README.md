@@ -8,6 +8,20 @@ Double-click `index.html` — opens in any browser. No installs, no server.
 
 > **Privacy:** all data is stored exclusively in your browser's `localStorage`. Nothing is sent to any server. Use the **Export** button to back up your data as a local JSON file.
 
+## Use on iPhone (installable web app)
+
+The app can be installed on an iPhone from a static HTTPS host (the service worker and install prompt need HTTPS; `file://` does not support them).
+
+1. Open the hosted URL in **Safari** (not an in-app browser).
+2. Tap **Share → Agregar a inicio**. The app then launches full-screen with its own icon and works offline.
+3. **Move your data over.** The installed app has its own storage, separate from Safari tabs and from your computer. On the computer tap **Exportar**, send the file to the phone (AirDrop / Files), then in the installed app tap **Importar** and choose it.
+
+Notes:
+- Import **replaces** all data on that device; it does not merge. Pick one main device, and export before switching.
+- Export on iPhone opens the share sheet (Save to Files, AirDrop, …). The app reminds you to export if your last backup is over 30 days old.
+- To try it locally: `python3 -m http.server`, then open `http://localhost:8000` (localhost counts as secure for the service worker).
+- After every deploy, bump `CACHE_VERSION` in `sw.js`; installed apps show a "Nueva versión disponible" banner.
+
 ## Features
 
 - **Multi-employee** — enroll employees with name, ID, phone, email, contract start date, and salary
@@ -16,7 +30,7 @@ Double-click `index.html` — opens in any browser. No installs, no server.
 - **Prima de servicios** — select "Prima" in the período dropdown for June or December to see the projected semester prima per employee (prorated from contract start date)
 - **Salary history** — log dated salary changes per employee; payroll auto-uses the salary in effect for each period
 - **Minimum wage toggle** — set salary to "Mínimo 2026" and all figures compute automatically
-- **Import / Export** — data saved in browser localStorage; use Export to back up as `mi_nomina.json`
+- **Import / Export** — data saved in browser localStorage; Export saves a dated `mi_nomina_YYYY-MM-DD.json` (share sheet on iPhone), Import validates the file and asks before replacing your data
 
 ## Payroll rules (Colombia 2026)
 
@@ -51,7 +65,7 @@ const MONTHLY_MIN_WAGE  = 1750905;  // update each January
 const MONTHLY_TRANSPORT = 249095;   // update each January
 ```
 
-Also add the new year to the quincena year dropdown (search for `2025,2026,2027`).
+Also add the new year to the quincena year dropdown (search for `2025,2026,2027`), and bump `CACHE_VERSION` in `sw.js` when you deploy so installed phones pick up the new constants.
 
 ## Data format
 
