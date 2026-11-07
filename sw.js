@@ -1,5 +1,5 @@
 // Bump CACHE_VERSION on every deploy so installed apps pick up the new files.
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE = `mi-nomina-${CACHE_VERSION}`;
 const PRECACHE = [
   './',

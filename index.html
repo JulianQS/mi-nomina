@@ -93,19 +93,8 @@
     ];
 
     // ── DEFAULT DATA ──────────────────────────────────────────
-    const DEFAULT_DB = {
-      active: "emp_demo",
-      employees: [{
-        id: "emp_demo",
-        name: "María", last_name: "García", cedula: "", phone: "", email: "",
-        contract_start: "2026-01-01",
-        salary_history: [
-          { date: "2026-01-01", amount: 1750905, is_minimum: true, note: "Ingreso" }
-        ],
-        initial_balance: 0, initial_date: "2026-01-01",
-        pto_events: []
-      }]
-    };
+    // A new install starts empty; the first employee is enrolled from the app.
+    const DEFAULT_DB = { active: null, employees: [] };
 
     // ── STORAGE / MIGRATION ───────────────────────────────────
     // Accepts the current shape or the legacy pto_db shape; returns the current shape.
@@ -162,7 +151,6 @@
       return !!navigator.standalone || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
     }
     function daysSince(iso) { return iso ? (Date.now() - new Date(iso).getTime()) / 86400000 : Infinity; }
-    function isDemoDB(db) { return db.employees.length === 1 && db.employees[0].id === DEFAULT_DB.employees[0].id && !db.employees[0].pto_events.length; }
 
     // ── DATE HELPERS ──────────────────────────────────────────
     function parseDate(s) { return new Date(s + 'T12:00:00'); }
@@ -1062,7 +1050,7 @@
     }
 
     // ── PROFILE ───────────────────────────────────────────────
-    function Profile({ emp, onUpdate, empIdx }) {
+    function Profile({ emp, onUpdate, onDelete, empIdx }) {
       const [editing, setEditing] = useState(false);
       const [editF, setEditF] = useState({
         name: emp.name, last_name: emp.last_name||'',
@@ -1188,7 +1176,25 @@
                 </div>
             }
           </Card>
+
+          <button onClick={() => { if (confirm(`¿Eliminar a ${emp.name} ${emp.last_name} y todos sus registros? Esta acción no se puede deshacer.`)) onDelete(emp.id); }}
+            className="w-full text-sm font-semibold text-red-600 py-3 rounded-xl hover:bg-red-50 transition-colors">
+            Eliminar empleada
+          </button>
         </div>
+      );
+    }
+
+    function Welcome({ onAdd }) {
+      return (
+        <Card className="p-6 text-center space-y-3">
+          <p className="text-base font-bold text-gray-800">Bienvenida</p>
+          <p className="text-sm text-gray-500">Aún no hay empleadas registradas. Enrola la primera para empezar a llevar su nómina y vacaciones.</p>
+          <button onClick={onAdd} className="w-full bg-indigo-600 text-white rounded-xl py-2.5 text-sm font-semibold hover:bg-indigo-700 transition-colors">
+            Enrolar primera empleada
+          </button>
+          <p className="text-xs text-gray-400">¿Tienes un archivo exportado? Usa «Importar» arriba.</p>
+        </Card>
       );
     }
 
@@ -1235,7 +1241,7 @@
       }, []);
 
       const empIdx = db.employees.findIndex(e => e.id === db.active);
-      const emp = db.employees[empIdx >= 0 ? empIdx : 0];
+      const emp = db.employees[empIdx >= 0 ? empIdx : 0] || null;
 
       function updateEmp(updated) {
         setDb(d => ({ ...d, employees: d.employees.map(e => e.id===updated.id ? updated : e) }));
@@ -1244,8 +1250,15 @@
         setDb(d => ({ ...d, active: newEmp.id, employees: [...d.employees, newEmp] }));
       }
       function selectEmp(id) { setDb(d => ({ ...d, active: id })); }
+      function removeEmp(id) {
+        setDb(d => {
+          const employees = d.employees.filter(e => e.id !== id);
+          return { ...d, employees, active: employees.length ? employees[0].id : null };
+        });
+      }
 
       async function exportJSON() {
+        if (db.employees.length === 0) { alert('Aún no hay empleadas para exportar.'); return; }
         const name = `mi_nomina_${new Date().toISOString().slice(0,10)}.json`;
         const json = JSON.stringify(db, null, 2);
         const file = new File([json], name, { type: 'application/json' });
@@ -1285,9 +1298,9 @@
         <label className={cls}>{text}<input type="file" accept="application/json,.json,text/plain" className="hidden" onChange={importJSON} /></label>
       );
       const showInstallHint = isIOS() && !isStandalone() && !lsGet(LS_INSTALL_HINT);
-      const showFirstRun = isStandalone() && isDemoDB(db);
+      const showFirstRun = isStandalone() && db.employees.length === 0;
       const snoozed = daysSince(lsGet(LS_BACKUP_SNOOZE)) < 7;
-      const showBackup = !showFirstRun && !isDemoDB(db) && !snoozed && daysSince(lsGet(LS_LAST_EXPORT)) > 30;
+      const showBackup = !showFirstRun && db.employees.length > 0 && !snoozed && daysSince(lsGet(LS_LAST_EXPORT)) > 30;
 
       const todayStr = new Date().toLocaleDateString('es-CO',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
 
@@ -1297,9 +1310,9 @@
             <div className="max-w-lg mx-auto flex items-start justify-between">
               <div>
                 <button onClick={() => setShowPicker(true)} className="group text-left">
-                  <p className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">Empleada activa</p>
+                  <p className="text-indigo-300 text-xs font-semibold uppercase tracking-widest">{emp ? 'Empleada activa' : 'Mi Nómina'}</p>
                   <div className="flex items-center gap-1.5 mt-0.5">
-                    <h1 className="text-white text-2xl font-black">{emp.name} {emp.last_name}</h1>
+                    <h1 className="text-white text-2xl font-black">{emp ? `${emp.name} ${emp.last_name}` : 'Sin empleadas'}</h1>
                     <svg className="w-5 h-5 text-indigo-300 group-hover:text-white transition-colors mt-0.5" viewBox="0 0 20 20" fill="currentColor">
                       <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd"/>
                     </svg>
@@ -1341,11 +1354,12 @@
                 <button className="tap font-semibold underline" onClick={exportJSON}>Exportar ahora</button>
               </Banner>
             )}
-            {tab==='dashboard' && <Dashboard emp={emp} onUpdate={updateEmp} />}
-            {tab==='payroll'   && <Payroll   emp={emp} />}
-            {tab==='history'   && <History   emp={emp} onUpdate={updateEmp} />}
-            {tab==='add'       && <AddPTO    emp={emp} onUpdate={updateEmp} />}
-            {tab==='profile'   && <Profile   emp={emp} onUpdate={updateEmp} empIdx={empIdx>=0?empIdx:0} />}
+            {!emp && <Welcome onAdd={() => setShowPicker(true)} />}
+            {emp && tab==='dashboard' && <Dashboard emp={emp} onUpdate={updateEmp} />}
+            {emp && tab==='payroll'   && <Payroll   emp={emp} />}
+            {emp && tab==='history'   && <History   emp={emp} onUpdate={updateEmp} />}
+            {emp && tab==='add'       && <AddPTO    emp={emp} onUpdate={updateEmp} />}
+            {emp && tab==='profile'   && <Profile   emp={emp} onUpdate={updateEmp} onDelete={removeEmp} empIdx={empIdx>=0?empIdx:0} />}
           </div>
 
           <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg z-10 safe-bottom">
